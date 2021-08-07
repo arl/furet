@@ -15,7 +15,7 @@ import (
 )
 
 const usage = `
-furet encrypts or decrypts \data with Fernet, line by line.
+furet encrypts or decrypts with the Fernet symmetric encryption.
 Usage: 
     furet [-o OUTPUT] --key KEY [INPUT]
     furet [--decrypt] --key KEY [-o OUTPUT] [INPUT]
@@ -122,13 +122,25 @@ func main() {
 }
 
 func decrypt(key *fernet.Key, in io.Reader, out io.Writer) {
+	lf := []byte("\n")
+	var linefeed []byte
+
 	scan := bufio.NewScanner(in)
 	for scan.Scan() {
 		msg := fernet.VerifyAndDecrypt(scan.Bytes(), 0, []*fernet.Key{key})
 		if msg == nil {
 			errorf("can't decrypt input %q", string(scan.Bytes()))
 		}
-		if _, err := fmt.Fprintf(out, "%s\n", string(msg)); err != nil {
+
+		if linefeed != nil {
+			if _, err := out.Write(linefeed); err != nil {
+				errorf("error writing to output: %s", err)
+			}
+		} else {
+			linefeed = lf
+		}
+
+		if _, err := out.Write(msg); err != nil {
 			errorf("error writing to output: %s", err)
 		}
 	}
@@ -139,13 +151,25 @@ func decrypt(key *fernet.Key, in io.Reader, out io.Writer) {
 }
 
 func encrypt(key *fernet.Key, in io.Reader, out io.Writer) {
+	lf := []byte("\n")
+	var linefeed []byte
+
 	scan := bufio.NewScanner(in)
 	for scan.Scan() {
 		msg, err := fernet.EncryptAndSign(scan.Bytes(), key)
 		if err != nil {
 			errorf("can't encrypt input %q: %s", string(scan.Bytes()), err)
 		}
-		if _, err := fmt.Fprintf(out, "%s\n", string(msg)); err != nil {
+
+		if linefeed != nil {
+			if _, err := out.Write(linefeed); err != nil {
+				errorf("error writing to output: %s", err)
+			}
+		} else {
+			linefeed = lf
+		}
+
+		if _, err := out.Write(msg); err != nil {
 			errorf("error writing to output: %s", err)
 		}
 	}
@@ -192,17 +216,5 @@ func (l *lazyOpener) Close() error {
 
 func errorf(format string, v ...interface{}) {
 	log.Printf("error: "+format, v...)
-	log.Fatalf("report unexpected or unhelpful errors at https://github.com/arl/furet")
-}
-
-func warningf(format string, v ...interface{}) {
-	log.Printf("warning: "+format, v...)
-}
-
-func errorWithHint(error string, hints ...string) {
-	log.Printf("error: %s", error)
-	for _, hint := range hints {
-		log.Printf("hint: %s", hint)
-	}
 	log.Fatalf("report unexpected or unhelpful errors at https://github.com/arl/furet")
 }
