@@ -1,3 +1,4 @@
+// furet is a minimal command line interface to encrypt or decrypt data with Fernet.
 package main
 
 import (
@@ -14,16 +15,24 @@ import (
 )
 
 const usage = `
-furet encrypts or decrypts \n delimited data with Fernet.
+furet encrypts or decrypts with the Fernet symmetric encryption.
 Usage: 
     furet [-o OUTPUT] --key KEY [INPUT]
     furet [--decrypt] --key KEY [-o OUTPUT] [INPUT]
 Options:
-    -e, --encrypt               Encrypt the input to the output. Default if omitted.
-    -d, --decrypt               Decrypt the input to the output.
-    -k, --key                   Fernet key. Accepts hexadecimal standard base64 or URL-safe base64.
+    -e, --encrypt     Encrypt the input to the output. Default if omitted.
+    -d, --decrypt     Decrypt the input to the output.
+    -k, --key         Key to use. (accepts hexadecimal standard base64 or URL-safe base64.
+    -g, --generate    Generate a random key.
 
-INPUT defaults to standard input, and OUTPUT defaults to standard output.`
+INPUT defaults to standard input, and OUTPUT defaults to standard output.
+
+Example:
+    $ KEY=$(furet -g)
+    $ furet --key $KEY -o file.furet file
+    $ furet --key $KEY -o file.furet < file
+    $ furet --decrypt -k $KEY -o file file.furet	
+    $ furet --decrypt -k $KEY < file.furet > file`
 
 func main() {
 	log.SetPrefix("furet:")
@@ -37,28 +46,30 @@ func main() {
 
 	var (
 		outFlag                  string
-		decryptFlag, encryptFlag bool
 		keyFlag                  string
+		decryptFlag, encryptFlag bool
+		generateFlag             bool
 	)
 
 	flag.BoolVar(&decryptFlag, "d", false, "decrypt the input")
 	flag.BoolVar(&decryptFlag, "decrypt", false, "decrypt the input")
 	flag.BoolVar(&encryptFlag, "e", false, "encrypt the input")
 	flag.BoolVar(&encryptFlag, "encrypt", false, "encrypt the input")
+	flag.BoolVar(&generateFlag, "g", false, "generate a random Fernet key")
+	flag.BoolVar(&generateFlag, "generate", false, "generate a random Fernet key")
 	flag.StringVar(&outFlag, "o", "", "output to `FILE` (default stdout)")
 	flag.StringVar(&outFlag, "output", "", "output to `FILE` (default stdout)")
 	flag.StringVar(&keyFlag, "k", "", "fernet key")
 	flag.StringVar(&keyFlag, "key", "", "fernet key")
 	flag.Parse()
 
-	if keyFlag == "" {
-		errorf("--key flag is mandatory")
+	if keyFlag == "" && !generateFlag {
+		errorf("--key flag is mandatory to encrypt or decrypt")
 	}
 
 	var (
-		in         io.Reader = os.Stdin
-		out        io.Writer = os.Stdout
-		stdinInUse bool
+		in  io.Reader = os.Stdin
+		out io.Writer = os.Stdout
 	)
 	if name := flag.Arg(0); name != "" && name != "-" {
 		f, err := os.Open(name)
@@ -67,8 +78,6 @@ func main() {
 		}
 		defer f.Close()
 		in = f
-	} else {
-		stdinInUse = true
 	}
 	if name := outFlag; name != "" && name != "-" {
 		f := newLazyOpener(name)
@@ -93,7 +102,11 @@ func main() {
 		}
 	}
 
-	_ = stdinInUse
+	if generateFlag {
+		key := generateKey()
+		fmt.Fprintln(out, key.Encode())
+		return
+	}
 
 	key, err := fernet.DecodeKey(keyFlag)
 	if err != nil {
@@ -109,13 +122,25 @@ func main() {
 }
 
 func decrypt(key *fernet.Key, in io.Reader, out io.Writer) {
+	lf := []byte("\n")
+	var linefeed []byte
+
 	scan := bufio.NewScanner(in)
 	for scan.Scan() {
 		msg := fernet.VerifyAndDecrypt(scan.Bytes(), 0, []*fernet.Key{key})
 		if msg == nil {
 			errorf("can't decrypt input %q", string(scan.Bytes()))
 		}
-		if _, err := fmt.Fprintf(out, "%s\n", string(msg)); err != nil {
+
+		if linefeed != nil {
+			if _, err := out.Write(linefeed); err != nil {
+				errorf("error writing to output: %s", err)
+			}
+		} else {
+			linefeed = lf
+		}
+
+		if _, err := out.Write(msg); err != nil {
 			errorf("error writing to output: %s", err)
 		}
 	}
@@ -126,13 +151,25 @@ func decrypt(key *fernet.Key, in io.Reader, out io.Writer) {
 }
 
 func encrypt(key *fernet.Key, in io.Reader, out io.Writer) {
+	lf := []byte("\n")
+	var linefeed []byte
+
 	scan := bufio.NewScanner(in)
 	for scan.Scan() {
 		msg, err := fernet.EncryptAndSign(scan.Bytes(), key)
-		if err == nil {
+		if err != nil {
 			errorf("can't encrypt input %q: %s", string(scan.Bytes()), err)
 		}
-		if _, err := fmt.Fprintf(out, "%s\n", string(msg)); err != nil {
+
+		if linefeed != nil {
+			if _, err := out.Write(linefeed); err != nil {
+				errorf("error writing to output: %s", err)
+			}
+		} else {
+			linefeed = lf
+		}
+
+		if _, err := out.Write(msg); err != nil {
 			errorf("error writing to output: %s", err)
 		}
 	}
@@ -140,6 +177,14 @@ func encrypt(key *fernet.Key, in io.Reader, out io.Writer) {
 	if scan.Err() != nil {
 		errorf("error reading from input: %s", scan.Err())
 	}
+}
+
+func generateKey() *fernet.Key {
+	key := &fernet.Key{}
+	if err := key.Generate(); err != nil {
+		errorf("error generating Fernet key: %s", err)
+	}
+	return key
 }
 
 type lazyOpener struct {
@@ -171,17 +216,5 @@ func (l *lazyOpener) Close() error {
 
 func errorf(format string, v ...interface{}) {
 	log.Printf("error: "+format, v...)
-	log.Fatalf("report unexpected or unhelpful errors at https://github.com/arl/furet")
-}
-
-func warningf(format string, v ...interface{}) {
-	log.Printf("warning: "+format, v...)
-}
-
-func errorWithHint(error string, hints ...string) {
-	log.Printf("error: %s", error)
-	for _, hint := range hints {
-		log.Printf("hint: %s", hint)
-	}
 	log.Fatalf("report unexpected or unhelpful errors at https://github.com/arl/furet")
 }
