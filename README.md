@@ -9,9 +9,11 @@ $ furet -h
 
 furet encrypts or decrypts with the Fernet symmetric encryption.
 
-Usage: 
+Usage:
+ 
     furet [-o OUTPUT] --key KEY [INPUT]
     furet [--decrypt] --key KEY [-o OUTPUT] [INPUT]
+
 Options:
     -e, --encrypt     Encrypt the input to the output. Default if omitted.
     -d, --decrypt     Decrypt the input to the output.
@@ -19,7 +21,7 @@ Options:
     -g, --generate    Generate a random key.
 INPUT defaults to standard input, and OUTPUT defaults to standard output.
 
-Example:
+Examples:
     $ KEY=$(furet -g)
     $ furet --key $KEY -o file.furet file
     $ furet --key $KEY -o file.furet < file
